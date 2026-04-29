@@ -20,7 +20,7 @@ def api(method, path, **kwargs):
 
 print(f'Waiting for build {BUILD_NUMBER} to be processed...')
 build_id = None
-for i in range(40):
+for i in range(80):
     r = api('GET', f'/builds?filter[app]={APP_ID}&filter[version]={BUILD_NUMBER}&filter[processingState]=VALID&limit=1')
     if r.get('data'):
         build_id = r['data'][0]['id']
