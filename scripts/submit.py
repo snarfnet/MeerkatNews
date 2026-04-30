@@ -78,18 +78,44 @@ r = api('PATCH', f'/appStoreVersions/{version_id}/relationships/build',
     json={'data': {'type': 'builds', 'id': build_id}})
 print(f'Build assigned: {r.status_code}')
 
-# Submit via reviewSubmissions API
-r = api('POST', '/reviewSubmissions', json={
-    'data': {
-        'type': 'reviewSubmissions',
-        'relationships': {'app': {'data': {'type': 'apps', 'id': APP_ID}}}
-    }
-})
-if r.status_code != 201:
-    print(f'Create reviewSubmission failed: {r.status_code} {r.text[:300]}')
+# Cancel any blocking reviewSubmissions
+canceled_any = False
+for state_filter in ['UNRESOLVED_ISSUES', 'READY_FOR_REVIEW']:
+    r = api('GET', f'/apps/{APP_ID}/reviewSubmissions?filter[state]={state_filter}')
+    if r.status_code == 200:
+        for sub in r.json().get('data', []):
+            sid = sub['id']
+            st = sub['attributes']['state']
+            cr = api('PATCH', f'/reviewSubmissions/{sid}', json={
+                'data': {'type': 'reviewSubmissions', 'id': sid, 'attributes': {'canceled': True}}
+            })
+            print(f'Cancel {sid} state={st}: {cr.status_code}')
+            canceled_any = True
+
+if canceled_any:
+    print('Waiting 10s for cancellations to propagate...')
+    time.sleep(10)
+
+# Submit via reviewSubmissions API (with retry)
+submission_id = None
+for attempt in range(3):
+    r = api('POST', '/reviewSubmissions', json={
+        'data': {
+            'type': 'reviewSubmissions',
+            'relationships': {'app': {'data': {'type': 'apps', 'id': APP_ID}}}
+        }
+    })
+    if r.status_code == 201:
+        submission_id = r.json()['data']['id']
+        print(f'ReviewSubmission created: {submission_id}')
+        break
+    print(f'Create reviewSubmission attempt {attempt+1}/3 failed: {r.status_code} {r.text[:200]}')
+    if attempt < 2:
+        time.sleep(10)
+
+if not submission_id:
+    print('Could not create reviewSubmission after 3 attempts.')
     sys.exit(0)
-submission_id = r.json()['data']['id']
-print(f'ReviewSubmission created: {submission_id}')
 
 r = api('POST', '/reviewSubmissionItems', json={
     'data': {
