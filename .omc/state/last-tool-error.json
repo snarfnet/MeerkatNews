@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cd /g/MacMiniBackup/FusuiRoban && git add ExportOptions.plist .github/workflows/build.yml && git commit -m \\\"Fix: use destination:upload in ExportOptions, remove deprecated altool step\\n\\n...",
+  "error": "Exit code 128\nwarning: in the working copy of '.github/workflows/build.yml', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'ExportOptions.plist', LF will be replaced by CRLF the next time Git touches it\n[main 9739e5b] Fix: use destination:upload in ExportOptions, remove deprecated altool step\n 2 files changed, 1 insertion(+), 5 deletions(-)\nfatal: The current branch main has no upstream branch.\nTo push the current branch and set the remote as upstream, ...",
+  "timestamp": "2026-04-29T13:21:20.734Z",
+  "retry_count": 1
+}
