@@ -13,40 +13,93 @@ def make_token():
         p8, algorithm='ES256', headers={'kid': KEY_ID}
     )
 
+def headers():
+    return {'Authorization': f'Bearer {make_token()}', 'Content-Type': 'application/json'}
+
 def api(method, path, **kwargs):
     r = requests.request(method, f'https://api.appstoreconnect.apple.com/v1{path}',
-        headers={'Authorization': f'Bearer {make_token()}', 'Content-Type': 'application/json'}, **kwargs)
-    return r.json()
+        headers=headers(), **kwargs)
+    return r
 
 print(f'Waiting for build {BUILD_NUMBER} to be processed...')
 build_id = None
 for i in range(80):
     r = api('GET', f'/builds?filter[app]={APP_ID}&filter[version]={BUILD_NUMBER}&filter[processingState]=VALID&limit=1')
-    if r.get('data'):
-        build_id = r['data'][0]['id']
+    data = r.json()
+    if data.get('data'):
+        build_id = data['data'][0]['id']
         print(f'Build ready: {build_id}')
         break
-    print(f'  Waiting... ({i+1}/40)')
+    print(f'  Waiting... ({i+1}/80)')
     time.sleep(30)
 
 if not build_id:
-    print('ERROR: Build not found after 20 minutes')
-    sys.exit(1)
-
-r = api('GET', f'/apps/{APP_ID}/appStoreVersions?filter[appStoreState]=PREPARE_FOR_SUBMISSION')
-if not r.get('data'):
-    print('No PREPARE_FOR_SUBMISSION version found - app may already be in review')
+    print('WARNING: Build not found after 40 minutes. Check ASC manually.')
     sys.exit(0)
-version_id = r['data'][0]['id']
+
+# Set export compliance
+r = api('PATCH', f'/builds/{build_id}',
+    json={'data': {'type': 'builds', 'id': build_id, 'attributes': {'usesNonExemptEncryption': False}}})
+print(f'Export compliance: {r.status_code}')
+
+# Get draft version
+r = api('GET', f'/apps/{APP_ID}/appStoreVersions?filter[appStoreState]=PREPARE_FOR_SUBMISSION')
+data = r.json()
+if not data.get('data'):
+    print('No draft version found. Creating new version...')
+    r = api('POST', '/appStoreVersions', json={
+        'data': {
+            'type': 'appStoreVersions',
+            'attributes': {'platform': 'IOS', 'versionString': '1.0'},
+            'relationships': {'app': {'data': {'type': 'apps', 'id': APP_ID}}}
+        }
+    })
+    if r.status_code not in (200, 201):
+        print(f'Failed to create version: {r.text[:300]}')
+        sys.exit(1)
+    version_id = r.json()['data']['id']
+else:
+    version_id = data['data'][0]['id']
 print(f'Version ID: {version_id}')
 
+# Assign build
 r = api('PATCH', f'/appStoreVersions/{version_id}/relationships/build',
     json={'data': {'type': 'builds', 'id': build_id}})
-print('Build assigned')
+print(f'Build assigned: {r.status_code}')
 
-r = api('POST', '/appStoreVersionSubmissions',
-    json={'data': {'type': 'appStoreVersionSubmissions', 'relationships': {'appStoreVersion': {'data': {'type': 'appStoreVersions', 'id': version_id}}}}})
-if r.get('data'):
-    print('Submitted for review!')
+# Submit via reviewSubmissions API
+r = api('POST', '/reviewSubmissions', json={
+    'data': {
+        'type': 'reviewSubmissions',
+        'relationships': {'app': {'data': {'type': 'apps', 'id': APP_ID}}}
+    }
+})
+if r.status_code != 201:
+    print(f'Create reviewSubmission failed: {r.status_code} {r.text[:300]}')
+    sys.exit(0)
+submission_id = r.json()['data']['id']
+print(f'ReviewSubmission created: {submission_id}')
+
+r = api('POST', '/reviewSubmissionItems', json={
+    'data': {
+        'type': 'reviewSubmissionItems',
+        'relationships': {
+            'reviewSubmission': {'data': {'type': 'reviewSubmissions', 'id': submission_id}},
+            'appStoreVersion': {'data': {'type': 'appStoreVersions', 'id': version_id}}
+        }
+    }
+})
+print(f'Add item: {r.status_code}')
+
+r = api('PATCH', f'/reviewSubmissions/{submission_id}', json={
+    'data': {
+        'type': 'reviewSubmissions',
+        'id': submission_id,
+        'attributes': {'submitted': True}
+    }
+})
+if r.status_code == 200:
+    state = r.json()['data']['attributes']['state']
+    print(f'Submitted! State: {state}')
 else:
-    print('Submit result:', r)
+    print(f'Submit failed: {r.status_code} {r.text[:300]}')
