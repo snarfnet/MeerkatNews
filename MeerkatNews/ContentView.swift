@@ -187,7 +187,7 @@ struct TabButton: View {
                 Text(title)
                     .font(.caption2)
             }
-            .foregroundStyle(isSelected ? .accentColor : .secondary)
+            .foregroundColor(isSelected ? Color.accentColor : Color.secondary)
             .frame(maxWidth: .infinity)
         }
     }
