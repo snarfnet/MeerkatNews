@@ -1,9 +1,21 @@
-import jwt, time, requests, sys
+import jwt, time, requests, sys, os, hashlib, glob, base64
 
 KEY_ID = 'WDXGY9WX55'
 ISSUER = '2be0734f-943a-4d61-9dc9-5d9045c46fec'
 APP_ID = '6763823577'
+PRIVACY_URL = 'https://snarfnet.github.io/'
 BUILD_NUMBER = sys.argv[1]
+SCREENSHOT_DIR = os.path.join(os.path.dirname(__file__), '..', 'screenshots')
+SCREENSHOT_DISPLAY_TYPE = 'APP_IPHONE_67'
+VERSION_STRING = '1.1'
+WHATS_NEW = 'Redesigned card-style news feed with voice reading. Improved bookmarks and sharing.'
+
+REVIEW_CONTACT = {
+    'contactFirstName': '聖',
+    'contactLastName': '尼崎',
+    'contactEmail': 'tokyonasu@yahoo.co.jp',
+    'contactPhone': '+81 80-2368-9194',
+}
 
 p8 = open('/tmp/asc_key.p8').read()
 
@@ -18,125 +30,244 @@ def headers():
 
 def api(method, path, **kwargs):
     r = requests.request(method, f'https://api.appstoreconnect.apple.com/v1{path}',
-        headers=headers(), **kwargs)
-    return r
+                         headers=headers(), **kwargs)
+    if not r.ok:
+        print(f'ERROR {r.status_code}: {r.text[:300]}')
+        sys.exit(1)
+    if r.status_code == 204 or not r.text:
+        return {}
+    return r.json()
 
-print(f'Waiting for build {BUILD_NUMBER} to be processed...')
-build_id = None
-for i in range(80):
-    r = api('GET', f'/builds?filter[app]={APP_ID}&filter[version]={BUILD_NUMBER}&filter[processingState]=VALID&limit=1')
-    data = r.json()
-    if data.get('data'):
-        build_id = data['data'][0]['id']
-        print(f'Build ready: {build_id}')
-        break
-    print(f'  Waiting... ({i+1}/80)')
+# ビルド待機
+print(f'Waiting for build {BUILD_NUMBER}...')
+for _ in range(40):
+    builds = api('GET', f'/builds?filter[app]={APP_ID}&filter[version]={BUILD_NUMBER}&limit=1')
+    items = builds.get('data', [])
+    if items:
+        build_id = items[0]['id']
+        state = items[0]['attributes']['processingState']
+        print(f'Build {build_id}: {state}')
+        if state == 'VALID':
+            break
     time.sleep(30)
+else:
+    print('Timed out waiting for build')
+    sys.exit(1)
 
-if not build_id:
-    print('WARNING: Build not found after 40 minutes. Check ASC manually.')
-    sys.exit(0)
-
-# Set export compliance
-r = api('PATCH', f'/builds/{build_id}',
-    json={'data': {'type': 'builds', 'id': build_id, 'attributes': {'usesNonExemptEncryption': False}}})
+# Export compliance
+r = requests.patch(f'https://api.appstoreconnect.apple.com/v1/builds/{build_id}',
+                   headers=headers(), json={
+    'data': {'type': 'builds', 'id': build_id,
+             'attributes': {'usesNonExemptEncryption': False}}
+})
 print(f'Export compliance: {r.status_code}')
 
-# Find version - check all states
-version_id = None
-version_state = None
-r = api('GET', f'/apps/{APP_ID}/appStoreVersions?filter[platform]=IOS&limit=1')
-data = r.json()
-if data.get('data'):
-    version_id = data['data'][0]['id']
-    version_state = data['data'][0]['attributes']['appStoreState']
-    print(f'Found version: {version_id} state={version_state}')
+# contentRightsDeclaration
+api('PATCH', f'/apps/{APP_ID}', json={
+    'data': {'type': 'apps', 'id': APP_ID,
+             'attributes': {'contentRightsDeclaration': 'DOES_NOT_USE_THIRD_PARTY_CONTENT'}}
+})
 
-if version_state in ('WAITING_FOR_REVIEW', 'IN_REVIEW'):
-    print(f'Already in review ({version_state}). Nothing to do.')
-    sys.exit(0)
+# privacyPolicyUrl
+app_infos = api('GET', f'/apps/{APP_ID}/appInfos')
+for info in app_infos.get('data', []):
+    locs = api('GET', f'/appInfos/{info["id"]}/appInfoLocalizations')
+    for loc in locs.get('data', []):
+        loc_id = loc['id']
+        r = requests.patch(f'https://api.appstoreconnect.apple.com/v1/appInfoLocalizations/{loc_id}',
+                           headers=headers(), json={
+            'data': {'type': 'appInfoLocalizations', 'id': loc_id,
+                     'attributes': {'privacyPolicyUrl': PRIVACY_URL}}
+        })
+        if r.ok:
+            print(f'  Updated privacyPolicyUrl for {loc_id}')
 
-if not version_id or version_state in ('READY_FOR_DISTRIBUTION',):
-    print('Creating new version...')
-    r = api('POST', '/appStoreVersions', json={
-        'data': {
-            'type': 'appStoreVersions',
-            'attributes': {'platform': 'IOS', 'versionString': '1.0'},
-            'relationships': {'app': {'data': {'type': 'apps', 'id': APP_ID}}}
-        }
-    })
-    if r.status_code not in (200, 201):
-        print(f'Failed to create version: {r.text[:300]}')
-        sys.exit(1)
-    version_id = r.json()['data']['id']
-    version_state = 'PREPARE_FOR_SUBMISSION'
+# ageRating - advertising true
+for info in app_infos.get('data', []):
+    r2 = requests.get(f'https://api.appstoreconnect.apple.com/v1/appInfos/{info["id"]}/ageRatingDeclaration',
+                      headers=headers())
+    if r2.ok and r2.json().get('data'):
+        ard_id = r2.json()['data']['id']
+        requests.patch(f'https://api.appstoreconnect.apple.com/v1/ageRatingDeclarations/{ard_id}',
+                      headers=headers(), json={
+            'data': {'type': 'ageRatingDeclarations', 'id': ard_id,
+                     'attributes': {'advertising': True}}
+        })
+        print(f'  Set advertising=true for {ard_id}')
 
-print(f'Version ID: {version_id} state={version_state}')
-
-# Assign build
-r = api('PATCH', f'/appStoreVersions/{version_id}/relationships/build',
-    json={'data': {'type': 'builds', 'id': build_id}})
-print(f'Build assigned: {r.status_code}')
-
-# Cancel any blocking reviewSubmissions
-canceled_any = False
-for state_filter in ['UNRESOLVED_ISSUES', 'READY_FOR_REVIEW']:
-    r = api('GET', f'/apps/{APP_ID}/reviewSubmissions?filter[state]={state_filter}')
-    if r.status_code == 200:
-        for sub in r.json().get('data', []):
-            sid = sub['id']
-            st = sub['attributes']['state']
-            cr = api('PATCH', f'/reviewSubmissions/{sid}', json={
-                'data': {'type': 'reviewSubmissions', 'id': sid, 'attributes': {'canceled': True}}
+# Cancel existing review submissions
+existing_reviews = requests.get(f'https://api.appstoreconnect.apple.com/v1/apps/{APP_ID}/reviewSubmissions',
+                                headers=headers())
+if existing_reviews.ok:
+    canceled = False
+    for er in existing_reviews.json().get('data', []):
+        er_state = er['attributes'].get('state', '')
+        if er_state in ('WAITING_FOR_REVIEW', 'IN_REVIEW', 'READY_FOR_REVIEW', 'UNRESOLVED_ISSUES'):
+            print(f'  Cancelling review {er["id"]} ({er_state})')
+            requests.patch(f'https://api.appstoreconnect.apple.com/v1/reviewSubmissions/{er["id"]}',
+                          headers=headers(), json={
+                'data': {'type': 'reviewSubmissions', 'id': er['id'],
+                         'attributes': {'canceled': True}}
             })
-            print(f'Cancel {sid} state={st}: {cr.status_code}')
-            canceled_any = True
-
-if canceled_any:
-    print('Waiting 10s for cancellations to propagate...')
-    time.sleep(10)
-
-# Submit via reviewSubmissions API (with retry)
-submission_id = None
-for attempt in range(3):
-    r = api('POST', '/reviewSubmissions', json={
-        'data': {
-            'type': 'reviewSubmissions',
-            'relationships': {'app': {'data': {'type': 'apps', 'id': APP_ID}}}
-        }
-    })
-    if r.status_code == 201:
-        submission_id = r.json()['data']['id']
-        print(f'ReviewSubmission created: {submission_id}')
-        break
-    print(f'Create reviewSubmission attempt {attempt+1}/3 failed: {r.status_code} {r.text[:200]}')
-    if attempt < 2:
+            canceled = True
+    if canceled:
         time.sleep(10)
 
-if not submission_id:
-    print('Could not create reviewSubmission after 3 attempts.')
-    sys.exit(0)
+# バージョン取得（なければ新規作成）
+versions = api('GET', f'/apps/{APP_ID}/appStoreVersions?filter[appStoreState]=PREPARE_FOR_SUBMISSION')
+if not versions['data']:
+    versions = api('GET', f'/apps/{APP_ID}/appStoreVersions?filter[appStoreState]=REJECTED')
+if not versions['data']:
+    print(f'Creating new version {VERSION_STRING}...')
+    new_ver = api('POST', '/appStoreVersions', json={
+        'data': {'type': 'appStoreVersions',
+                 'attributes': {'versionString': VERSION_STRING, 'platform': 'IOS'},
+                 'relationships': {'app': {'data': {'type': 'apps', 'id': APP_ID}}}}
+    })
+    versions = {'data': [new_ver['data']]}
 
-r = api('POST', '/reviewSubmissionItems', json={
-    'data': {
-        'type': 'reviewSubmissionItems',
-        'relationships': {
-            'reviewSubmission': {'data': {'type': 'reviewSubmissions', 'id': submission_id}},
-            'appStoreVersion': {'data': {'type': 'appStoreVersions', 'id': version_id}}
-        }
-    }
-})
-print(f'Add item: {r.status_code}')
+version_id = versions['data'][0]['id']
 
-r = api('PATCH', f'/reviewSubmissions/{submission_id}', json={
-    'data': {
-        'type': 'reviewSubmissions',
-        'id': submission_id,
-        'attributes': {'submitted': True}
-    }
-})
-if r.status_code == 200:
-    state = r.json()['data']['attributes']['state']
-    print(f'Submitted! State: {state}')
+# whatsNew
+ver_locs = api('GET', f'/appStoreVersions/{version_id}/appStoreVersionLocalizations')
+for vl in ver_locs.get('data', []):
+    vl_id = vl['id']
+    api('PATCH', f'/appStoreVersionLocalizations/{vl_id}', json={
+        'data': {'type': 'appStoreVersionLocalizations', 'id': vl_id,
+                 'attributes': {'whatsNew': WHATS_NEW}}
+    })
+    print(f'  Set whatsNew for {vl["attributes"]["locale"]}')
+
+# レビュー詳細
+rd_attrs = {**REVIEW_CONTACT, 'demoAccountRequired': False, 'demoAccountName': '', 'demoAccountPassword': ''}
+review_details = api('GET', f'/appStoreVersions/{version_id}/appStoreReviewDetail')
+if review_details.get('data'):
+    rd_id = review_details['data']['id']
+    api('PATCH', f'/appStoreReviewDetails/{rd_id}', json={
+        'data': {'type': 'appStoreReviewDetails', 'id': rd_id, 'attributes': rd_attrs}
+    })
 else:
-    print(f'Submit failed: {r.status_code} {r.text[:300]}')
+    api('POST', '/appStoreReviewDetails', json={
+        'data': {'type': 'appStoreReviewDetails',
+                 'attributes': rd_attrs,
+                 'relationships': {'appStoreVersion': {'data': {'type': 'appStoreVersions', 'id': version_id}}}}
+    })
+
+# スクリーンショットアップロード
+print('Uploading screenshots...')
+locs = api('GET', f'/appStoreVersions/{version_id}/appStoreVersionLocalizations')
+for loc in locs.get('data', []):
+    loc_id = loc['id']
+    locale = loc['attributes']['locale']
+    print(f'  Locale: {locale}')
+
+    # 既存スクショセットを削除
+    sets = api('GET', f'/appStoreVersionLocalizations/{loc_id}/appScreenshotSets')
+    for s in sets.get('data', []):
+        if s['attributes']['screenshotDisplayType'] == SCREENSHOT_DISPLAY_TYPE:
+            existing = api('GET', f'/appScreenshotSets/{s["id"]}/appScreenshots')
+            for sc in existing.get('data', []):
+                api('DELETE', f'/appScreenshots/{sc["id"]}')
+            api('DELETE', f'/appScreenshotSets/{s["id"]}')
+
+    # 新しいスクショセット作成
+    ss_set = api('POST', '/appScreenshotSets', json={
+        'data': {'type': 'appScreenshotSets',
+                 'attributes': {'screenshotDisplayType': SCREENSHOT_DISPLAY_TYPE},
+                 'relationships': {'appStoreVersionLocalization': {
+                     'data': {'type': 'appStoreVersionLocalizations', 'id': loc_id}}}}
+    })
+    set_id = ss_set['data']['id']
+
+    # アップロード
+    files = sorted(glob.glob(os.path.join(SCREENSHOT_DIR, '*.png')))
+    for fpath in files:
+        fname = os.path.basename(fpath)
+        fsize = os.path.getsize(fpath)
+        with open(fpath, 'rb') as f:
+            fdata = f.read()
+        md5 = hashlib.md5(fdata).digest()
+        md5_b64 = base64.b64encode(md5).decode()
+
+        reservation = api('POST', '/appScreenshots', json={
+            'data': {'type': 'appScreenshots',
+                     'attributes': {'fileName': fname, 'fileSize': fsize},
+                     'relationships': {'appScreenshotSet': {
+                         'data': {'type': 'appScreenshotSets', 'id': set_id}}}}
+        })
+        ss_id = reservation['data']['id']
+        upload_ops = reservation['data']['attributes']['uploadOperations']
+
+        for op in upload_ops:
+            offset = op['offset']
+            length = op['length']
+            chunk = fdata[offset:offset + length]
+            upload_headers = {h['name']: h['value'] for h in op['requestHeaders']}
+            r = requests.put(op['url'], headers=upload_headers, data=chunk)
+            if not r.ok:
+                print(f'    Upload chunk failed: {r.status_code}')
+                sys.exit(1)
+
+        api('PATCH', f'/appScreenshots/{ss_id}', json={
+            'data': {'type': 'appScreenshots', 'id': ss_id,
+                     'attributes': {'uploaded': True, 'sourceFileChecksum': md5_b64}}
+        })
+        print(f'    Uploaded: {fname}')
+
+# スクショ処理待ち
+print('Waiting for screenshot processing...')
+for _ in range(40):
+    time.sleep(30)
+    all_done = True
+    locs_check = api('GET', f'/appStoreVersions/{version_id}/appStoreVersionLocalizations')
+    for loc_c in locs_check.get('data', []):
+        sets_check = api('GET', f'/appStoreVersionLocalizations/{loc_c["id"]}/appScreenshotSets')
+        for sc_set in sets_check.get('data', []):
+            screenshots = api('GET', f'/appScreenshotSets/{sc_set["id"]}/appScreenshots')
+            for sc in screenshots.get('data', []):
+                delivery = sc['attributes'].get('assetDeliveryState', {})
+                state = delivery.get('state', '')
+                errors = delivery.get('errors', [])
+                if errors:
+                    print(f'    Screenshot {sc["id"]} ERROR: {errors}')
+                    print('Screenshot processing failed, aborting')
+                    sys.exit(1)
+                if state != 'COMPLETE':
+                    all_done = False
+                    break
+            if not all_done:
+                break
+        if not all_done:
+            break
+    if all_done:
+        print('All screenshots processed!')
+        break
+    print('  Still processing...')
+else:
+    print('Warning: screenshot processing timed out, attempting submit anyway')
+
+# ビルドをバージョンに紐付け
+api('PATCH', f'/appStoreVersions/{version_id}', json={
+    'data': {'type': 'appStoreVersions', 'id': version_id,
+             'relationships': {'build': {'data': {'type': 'builds', 'id': build_id}}}}
+})
+
+# 審査提出
+review = api('POST', '/reviewSubmissions', json={
+    'data': {'type': 'reviewSubmissions', 'attributes': {'platform': 'IOS'},
+             'relationships': {'app': {'data': {'type': 'apps', 'id': APP_ID}}}}
+})
+review_id = review['data']['id']
+
+api('POST', '/reviewSubmissionItems', json={
+    'data': {'type': 'reviewSubmissionItems',
+             'relationships': {'reviewSubmission': {'data': {'type': 'reviewSubmissions', 'id': review_id}},
+                               'appStoreVersion': {'data': {'type': 'appStoreVersions', 'id': version_id}}}}
+})
+
+api('PATCH', f'/reviewSubmissions/{review_id}', json={
+    'data': {'type': 'reviewSubmissions', 'id': review_id,
+             'attributes': {'submitted': True}}
+})
+
+print('Submitted for review!')

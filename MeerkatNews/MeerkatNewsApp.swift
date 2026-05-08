@@ -18,6 +18,7 @@ struct MeerkatNewsApp: App {
     }
 
     private func requestTrackingPermission() {
+        guard ATTrackingManager.trackingAuthorizationStatus == .notDetermined else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             ATTrackingManager.requestTrackingAuthorization { _ in }
         }

@@ -32,7 +32,7 @@
 		<true/>
 	</dict>
 	<key>NSUserTrackingUsageDescription</key>
-	<string>このアプリはパーソナライズ広告のためにデータを使用します。</string>
+	<string>広告の配信と効果測定のために使用します。</string>
 	<key>SKAdNetworkItems</key>
 	<array>
 		<dict>

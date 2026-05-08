@@ -16,7 +16,7 @@ struct NewsItem: Identifiable {
     var dateLabel: String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
-        formatter.dateFormat = "M月d日（E）"
+        formatter.dateFormat = "M月d日"
         return formatter.string(from: publishedDate)
     }
 }

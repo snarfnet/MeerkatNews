@@ -13,7 +13,7 @@ settings:
   base:
     SWIFT_VERSION: 5.9
     TARGETED_DEVICE_FAMILY: "1"
-    MARKETING_VERSION: "1.0"
+    MARKETING_VERSION: "1.1"
     CURRENT_PROJECT_VERSION: "1"
     PRODUCT_BUNDLE_IDENTIFIER: com.tokyonasu.meerkatnews
     DEVELOPMENT_TEAM: 83VGKGSQUH
@@ -35,8 +35,8 @@ targets:
       properties:
         CFBundleName: ミーアキャットニュース
         CFBundleDisplayName: ミーアキャットニュース
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "4"
+        CFBundleShortVersionString: "1.1"
+        CFBundleVersion: "1"
         LSRequiresIPhoneOS: true
         UILaunchScreen:
           UIColorName: ""
@@ -49,7 +49,7 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-        NSUserTrackingUsageDescription: "このアプリはパーソナライズ広告のためにデータを使用します。"
+        NSUserTrackingUsageDescription: "広告の配信と効果測定のために使用します。"
         GADApplicationIdentifier: ca-app-pub-9404799280370656~1609590596
         SKAdNetworkItems:
           - SKAdNetworkIdentifier: cstr6suwn9.skadnetwork
