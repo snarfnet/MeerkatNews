@@ -4,6 +4,8 @@ import AppTrackingTransparency
 
 @main
 struct MeerkatNewsApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+
     init() {
         GADMobileAds.sharedInstance().start(completionHandler: nil)
     }
@@ -11,9 +13,11 @@ struct MeerkatNewsApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .onAppear {
-                    requestTrackingPermission()
-                }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                requestTrackingPermission()
+            }
         }
     }
 
