@@ -7,7 +7,7 @@ PRIVACY_URL = 'https://snarfnet.github.io/'
 BUILD_NUMBER = sys.argv[1]
 SCREENSHOT_DIR = os.path.join(os.path.dirname(__file__), '..', 'screenshots')
 SCREENSHOT_DISPLAY_TYPE = 'APP_IPHONE_67'
-VERSION_STRING = '1.1'
+VERSION_STRING = '1.2'
 WHATS_NEW = 'Redesigned card-style news feed with voice reading. Improved bookmarks and sharing.'
 
 REVIEW_CONTACT = {
